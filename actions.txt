@@ -1,0 +1,234 @@
+# Windows Application Control / Essential Eight Test Procedure
+
+This section provides a simple test procedure for validating application control and application hardening controls from a standard user context.
+
+The supplied test artefacts include:
+
+| File Type | Test Artefact |
+|---|---|
+| MSI | `Essential_Eight.msi` |
+| MST | `Essential_Eight.mst` |
+| BAT | `Essential_Eight.bat` |
+| CHM | `Essential_Eight.chm` |
+| COM | `Essential_Eight.com` |
+| EXE | `Essential_Eight.exe` |
+| HTA | `Essential_Eight.hta` |
+| HTML | `Essential_Eight.html` |
+| JS | `Essential_Eight.js` |
+| PowerShell | `Essential_Eight.ps1` |
+| VBS | `Essential_Eight.vbs` |
+
+Testing should be performed from a normal, non-elevated user context.
+
+The initial objective is to determine whether each unapproved test artefact is permitted or blocked by the configured application control solution.
+
+Do not use execution-policy bypasses, alternate loaders or application-control bypass techniques during the initial test.
+
+---
+
+## 1. Confirm Test Context
+
+Open a normal PowerShell session and run:
+
+```powershell
+whoami
+$ExecutionContext.SessionState.LanguageMode
+Get-ExecutionPolicy -List
+
+Record the output.
+For an application-control assessment, it is useful to capture:
+- Current user
+- PowerShell language mode
+- Effective execution policies
+- Whether PowerShell itself is available to the standard user
+2. Navigate to Test Files
+Change to the directory containing the test artefacts.
+cd "C:\Path\To\TestFiles"
+
+Confirm the files:
+Get-ChildItem | Select-Object Name,Extension
+
+Application Control Tests
+EXE Execution
+Test normal executable execution.
+.\Essential_Eight.exe
+
+Expected Result
+The unapproved executable should be blocked by application control.
+Capture:
+- Command entered
+- Console response
+- Airlock / application-control notification
+COM Execution
+Test DOS/COM executable handling.
+.\Essential_Eight.com
+
+Expected Result
+The unapproved executable should be blocked.
+Batch File Execution
+Test batch script execution through cmd.exe.
+cmd.exe /c ".\Essential_Eight.bat"
+
+Expected Result
+Execution should be blocked if batch scripts are restricted by the configured application control policy.
+PowerShell Script Execution
+First record the PowerShell security context:
+whoami
+$ExecutionContext.SessionState.LanguageMode
+Get-ExecutionPolicy -List
+
+Then execute the test script normally:
+powershell.exe -NoProfile -File ".\Essential_Eight.ps1"
+
+Expected Result
+The unapproved PowerShell script should be blocked or otherwise restricted according to the intended application-control policy.
+Do not use:
+-ExecutionPolicy Bypass
+
+during the initial test.
+VBScript Execution
+Test using the console-based Windows Script Host:
+cscript.exe //nologo ".\Essential_Eight.vbs"
+
+Also test the GUI Windows Script Host:
+wscript.exe ".\Essential_Eight.vbs"
+
+Expected Result
+The unapproved VBScript should be blocked.
+JScript Execution
+Test using cscript.exe:
+cscript.exe //nologo ".\Essential_Eight.js"
+
+Also test using wscript.exe:
+wscript.exe ".\Essential_Eight.js"
+
+Expected Result
+The unapproved JScript file should be blocked.
+HTA Execution
+Test HTML Application execution using mshta.exe.
+mshta.exe ".\Essential_Eight.hta"
+
+Expected Result
+The unapproved HTA should be blocked.
+Successful HTA execution may indicate that mshta.exe remains available as a script/application execution mechanism.
+CHM Execution
+Test Compiled HTML Help execution.
+hh.exe ".\Essential_Eight.chm"
+
+Expected Result
+The CHM should be blocked or constrained in accordance with the intended application hardening policy.
+Windows Installer Tests
+MSI Execution
+Test normal Windows Installer package execution.
+msiexec.exe /i ".\Essential_Eight.msi" /L*v "$env:TEMP\EssentialEight-MSI.log"
+
+The verbose MSI log will be written to:
+%TEMP%\EssentialEight-MSI.log
+
+Expected Result
+An unapproved MSI should not be permitted to install software.
+Possible secure outcomes include:
+- Application-control block
+- Windows Installer policy block
+- Elevation requirement that cannot be satisfied by the standard user
+MST Transform Execution
+An .mst file is a Windows Installer transform and is not normally executed independently.
+Test the MST with the corresponding MSI:
+msiexec.exe /i ".\Essential_Eight.msi" TRANSFORMS=".\Essential_Eight.mst" /L*v "$env:TEMP\EssentialEight-MST.log"
+
+The log will be written to:
+%TEMP%\EssentialEight-MST.log
+
+Expected Result
+The transform should not allow an otherwise unapproved MSI installation to succeed.
+HTML Test
+An ordinary HTML document is normally expected to open in the approved browser.
+Start-Process ".\Essential_Eight.html"
+
+Interpretation
+Successful HTML rendering by the approved browser is not, by itself, an application-control failure.
+This test is more relevant to:
+- Browser hardening
+- Active content restrictions
+- JavaScript restrictions
+- Browser extension controls
+- Download controls
+- Web content filtering
+Treat this separately from executable application-control testing.
+Application-Control Event Logs
+After running the tests, review the relevant Windows event logs.
+AppLocker EXE and DLL Events
+$since = (Get-Date).AddMinutes(-10)
+
+Get-WinEvent -FilterHashtable @{
+    LogName   = 'Microsoft-Windows-AppLocker/EXE and DLL'
+    StartTime = $since
+} -ErrorAction SilentlyContinue |
+Select-Object TimeCreated,Id,Message |
+Format-List
+
+AppLocker MSI and Script Events
+$since = (Get-Date).AddMinutes(-10)
+
+Get-WinEvent -FilterHashtable @{
+    LogName   = 'Microsoft-Windows-AppLocker/MSI and Script'
+    StartTime = $since
+} -ErrorAction SilentlyContinue |
+Select-Object TimeCreated,Id,Message |
+Format-List
+
+Code Integrity Events
+$since = (Get-Date).AddMinutes(-10)
+
+Get-WinEvent -FilterHashtable @{
+    LogName   = 'Microsoft-Windows-CodeIntegrity/Operational'
+    StartTime = $since
+} -ErrorAction SilentlyContinue |
+Select-Object TimeCreated,Id,Message |
+Format-List
+
+Suggested Test Results Table
+Test	Command	Expected Result	Result	Screenshot
+EXE	.\Essential_Eight.exe	Blocked		
+COM	.\Essential_Eight.com	Blocked		
+BAT	cmd.exe /c ".\Essential_Eight.bat"	Blocked		
+PowerShell	powershell.exe -NoProfile -File ".\Essential_Eight.ps1"	Blocked / restricted		
+VBS - cscript	cscript.exe //nologo ".\Essential_Eight.vbs"	Blocked		
+VBS - wscript	wscript.exe ".\Essential_Eight.vbs"	Blocked		
+JS - cscript	cscript.exe //nologo ".\Essential_Eight.js"	Blocked		
+JS - wscript	wscript.exe ".\Essential_Eight.js"	Blocked		
+HTA	mshta.exe ".\Essential_Eight.hta"	Blocked		
+CHM	hh.exe ".\Essential_Eight.chm"	Blocked / restricted		
+MSI	msiexec.exe /i ".\Essential_Eight.msi"	Blocked / installation prevented		
+MSI + MST	msiexec.exe /i ".\Essential_Eight.msi" TRANSFORMS=".\Essential_Eight.mst"	Blocked / installation prevented		
+HTML	Start-Process ".\Essential_Eight.html"	Opens in approved browser		
+
+
+Evidence Collection
+For each test, capture a screenshot that includes:
+1. The PowerShell or Command Prompt command used.
+2. The response returned by Windows.
+3. Any Airlock or application-control notification.
+4. Successful execution output if the artefact was permitted.
+Where possible, capture the corresponding AppLocker or Code Integrity event as supporting evidence.
+Result Interpretation
+A successful application-control implementation should prevent unapproved executable and script content from running.
+Particular attention should be given to any difference in behaviour between:
+EXE
+COM
+BAT
+PS1
+VBS
+JS
+HTA
+CHM
+MSI
+MSI + MST
+
+For example, if Essential_Eight.exe is blocked but Essential_Eight.hta or Essential_Eight.js executes successfully, this may indicate incomplete application-control coverage for alternate executable or scripting formats.
+Successful execution should be manually reviewed to determine whether:
+- the file is explicitly approved;
+- the interpreter is approved but child content is not sufficiently controlled;
+- the file type falls outside the configured policy;
+- another endpoint control mitigates the execution path.
+Do not treat ordinary HTML opening in the approved browser as an application-control bypass.
