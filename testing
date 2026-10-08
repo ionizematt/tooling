@@ -1,0 +1,125 @@
+reg query "HKLM\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging" /s
+reg query "HKLM\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ModuleLogging" /s
+reg query "HKLM\SOFTWARE\Policies\Microsoft\Windows\PowerShell\Transcription" /s
+
+
+# Defender ASR Rules
+
+$p = Get-MpPreference
+
+$p |
+    Select-Object AttackSurfaceReductionRules_Ids,AttackSurfaceReductionRules_Actions |
+    Format-List
+
+gpresult /r
+
+
+gpresult /r
+
+
+reg query "HKLM\SOFTWARE\Microsoft\Policies\LAPS" /s
+
+
+net accounts
+
+
+ipconfig /all
+
+Get-NetFirewallProfile |
+    Select-Object Name,Enabled,LogAllowed,LogBlocked,LogFileName,LogMaxSizeKilobytes |
+    Format-Table -AutoSize
+
+# ============================================================
+# ADDITIONAL FINDING VALIDATION
+# ============================================================
+
+
+# ------------------------------------------------------------
+# Remote Desktop Exposure
+# ------------------------------------------------------------
+
+Get-Service TermService
+
+Get-NetTCPConnection -State Listen -LocalPort 3389 -ErrorAction SilentlyContinue
+
+reg query "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections
+
+Get-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction SilentlyContinue |
+    Select-Object DisplayName,Enabled,Direction,Action,Profile |
+    Format-Table -AutoSize
+
+
+# ------------------------------------------------------------
+# Defender Controlled Folder Access
+# ------------------------------------------------------------
+
+Get-MpPreference |
+    Select-Object EnableControlledFolderAccess
+
+reg query "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\Windows Defender Exploit Guard\Controlled Folder Access" /s
+
+
+# ------------------------------------------------------------
+# Potential Unquoted Service Paths
+# ------------------------------------------------------------
+
+sc.exe qc DefenderUpdateSvc
+
+sc.exe qc Sense
+
+icacls "C:\ProgramData"
+
+icacls "C:\ProgramData\Microsoft"
+
+icacls "C:\ProgramData\Microsoft\Microsoft Defender"
+
+icacls "C:\ProgramData\Microsoft\Microsoft Defender\Defender Update"
+
+icacls "C:\ProgramData\Microsoft\Windows Defender Advanced Threat Protection"
+
+icacls "C:\ProgramData\Microsoft\Windows Defender Advanced Threat Protection\Platform"
+
+
+# ------------------------------------------------------------
+# DWS-Desktop Local Account
+# ------------------------------------------------------------
+
+Get-LocalUser DWS-Desktop |
+    Format-List Name,Enabled,Description,PasswordRequired,PasswordExpires,UserMayChangePassword,LastLogon
+
+net user DWS-Desktop
+
+Get-LocalGroupMember Administrators
+
+Get-LocalGroup | ForEach-Object {
+    $g = $_.Name
+    Get-LocalGroupMember $g -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match 'DWS-Desktop' } |
+        Select-Object @{N='Group';E={$g}},Name
+}
+
+
+# ------------------------------------------------------------
+# DefenderSessionHelper Code Integrity
+# ------------------------------------------------------------
+
+$f = Get-ChildItem "$env:ProgramData\Microsoft\Windows Defender\Platform" `
+    -Filter DefenderSessionHelper.exe `
+    -Recurse `
+    -ErrorAction SilentlyContinue |
+    Select-Object -First 1 -ExpandProperty FullName
+
+$f
+
+Get-AuthenticodeSignature $f |
+    Format-List Status,StatusMessage,SignerCertificate
+
+Get-FileHash $f -Algorithm SHA256
+
+Get-WinEvent -FilterHashtable @{
+    LogName = 'Microsoft-Windows-CodeIntegrity/Operational'
+    Id      = 3004
+} -ErrorAction SilentlyContinue |
+    Where-Object { $_.Message -match 'DefenderSessionHelper' } |
+    Select-Object TimeCreated,Id,Message |
+    Format-List
