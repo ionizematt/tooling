@@ -1,0 +1,82 @@
+# ============================================================
+# Ionize - Microsoft.Workflow.Compiler.exe Test
+# 9 October 2026
+# ============================================================
+
+# Identify the Windows Workflow Compiler
+$framework = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319"
+$workflowexe = Join-Path $framework "Microsoft.Workflow.Compiler.exe"
+
+# Use a writable directory in the current user's profile
+$testDir = Join-Path $env:USERPROFILE "Ionize-Workflow-Test"
+
+New-Item -ItemType Directory -Path $testDir -Force | Out-Null
+
+# Define test file paths
+$source = Join-Path $testDir "test.txt"
+$output = Join-Path $testDir "run.xml"
+$results = Join-Path $testDir "results.xml"
+
+# Confirm the compiler exists
+if (-not (Test-Path $workflowexe)) {
+    throw "Microsoft.Workflow.Compiler.exe was not found: $workflowexe"
+}
+
+# ------------------------------------------------------------
+# Create benign C# test code
+# ------------------------------------------------------------
+
+@'
+using System;
+using System.Workflow.Activities;
+
+public class IonizeTest : SequentialWorkflowActivity
+{
+    public IonizeTest()
+    {
+        Console.WriteLine("Ionize test - 9 Oct 2026");
+    }
+}
+'@ | Set-Content -Path $source -Encoding ASCII
+
+# ------------------------------------------------------------
+# Create serialized compiler input
+# ------------------------------------------------------------
+
+$workflowasm = [Reflection.Assembly]::LoadFrom($workflowexe)
+
+$SerializeInputToWrapper = $workflowasm.GetType(
+    'Microsoft.Workflow.Compiler.CompilerWrapper'
+).GetMethod(
+    'SerializeInputToWrapper',
+    [Reflection.BindingFlags] 'NonPublic, Static'
+)
+
+Add-Type -Path (Join-Path $framework "System.Workflow.ComponentModel.dll")
+
+$compilerparam = New-Object Workflow.ComponentModel.Compiler.WorkflowCompilerParameters
+
+$compilerparam.GenerateInMemory = $true
+
+# Prepare reflection arguments
+$argsList = New-Object 'object[]' 2
+$argsList[0] = $compilerparam
+$argsList[1] = [string[]]@($source)
+
+# Generate the XML
+$tmp = $SerializeInputToWrapper.Invoke($null, $argsList)
+
+Move-Item -Path $tmp -Destination $output -Force
+
+# ------------------------------------------------------------
+# Execute Workflow Compiler
+# ------------------------------------------------------------
+
+whoami
+
+Write-Host "Executing: $workflowexe"
+Write-Host "Input: $output"
+
+& $workflowexe $output $results
+
+Write-Host "Exit code: $LASTEXITCODE"
