@@ -123,3 +123,57 @@ Get-WinEvent -FilterHashtable @{
     Where-Object { $_.Message -match 'DefenderSessionHelper' } |
     Select-Object TimeCreated,Id,Message |
     Format-List
+
+Remaining tests
+
+# ============================================================
+# ADDITIONAL ISM HARDENING CHECKS
+# ============================================================
+
+
+# ------------------------------------------------------------
+# ISM-0341 - Removable Media AutoRun
+# ------------------------------------------------------------
+
+reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer" /v NoDriveTypeAutoRun
+
+reg query "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer" /v NoDriveTypeAutoRun
+
+
+# ------------------------------------------------------------
+# ISM-1621 - PowerShell 2.0
+# ------------------------------------------------------------
+
+powershell.exe -Version 2 -NoProfile -Command '$PSVersionTable.PSVersion'
+
+
+# ------------------------------------------------------------
+# ISM-1654 - Internet Explorer 11
+# ------------------------------------------------------------
+
+reg query "HKLM\SOFTWARE\Policies\Microsoft\Internet Explorer\Main" /v DisableInternetExplorerApp
+
+reg query "HKCU\SOFTWARE\Policies\Microsoft\Internet Explorer\Main" /v DisableInternetExplorerApp
+
+
+# ------------------------------------------------------------
+# ISM-1655 - .NET Framework 3.5
+# ------------------------------------------------------------
+
+reg query "HKLM\SOFTWARE\Microsoft\NET Framework Setup\NDP\v3.5" /v Install
+
+
+# ------------------------------------------------------------
+# Windows Optional Features - Additional Validation
+# May require administrative privileges to query
+# ------------------------------------------------------------
+
+Get-WindowsOptionalFeature -Online |
+    Where-Object {
+        $_.FeatureName -match 'NetFx3|PowerShellV2|Internet-Explorer'
+    } |
+    Select-Object FeatureName,State
+
+
+
+
