@@ -1,0 +1,35 @@
+<Project ToolsVersion="4.0"
+         DefaultTargets="IonizeTest"
+         xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <UsingTask
+      TaskName="MSBuildTest"
+      TaskFactory="CodeTaskFactory"
+      AssemblyFile="C:\Windows\Microsoft.NET\Framework\v4.0.30319\Microsoft.Build.Tasks.v4.0.dll">
+
+    <Task>
+      <Code Type="Class" Language="cs">
+        <![CDATA[
+using System;
+using Microsoft.Build.Framework;
+using Microsoft.Build.Utilities;
+
+public class MSBuildTest : Task
+{
+    public override bool Execute()
+    {
+        Console.WriteLine("Ionize test - 9 Oct 2026 - MSBuild x86");
+        return true;
+    }
+}
+        ]]>
+      </Code>
+    </Task>
+
+  </UsingTask>
+
+  <Target Name="IonizeTest">
+    <MSBuildTest />
+  </Target>
+
+</Project>
