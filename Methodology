@@ -1,0 +1,485 @@
+1. Weak service permissions / privilege escalation
+ATSB found a LocalSystem service whose configuration could be modified by Authenticated Users, resulting in SYSTEM compromise.     ATSB SOE Penetration Test Repor…
+Start as the standard user:
+whoami
+
+Get-CimInstance Win32_Service |
+Select-Object Name,StartName,State,PathName |
+Sort-Object Name
+
+Then enumerate service security descriptors:
+sc.exe query state= all
+
+For anything interesting:
+sc.exe sdshow SERVICE_NAME
+sc.exe qc SERVICE_NAME
+
+We specifically care about service ACL rights such as:
+SERVICE_CHANGE_CONFIG
+SERVICE_START
+SERVICE_STOP
+WRITE_DAC
+WRITE_OWNER
+GENERIC_WRITE
+GENERIC_ALL
+
+being granted to Users, Authenticated Users, Everyone or the current standard user.
+Also check executable/path ACLs:
+Get-CimInstance Win32_Service | ForEach-Object {
+    [pscustomobject]@{
+        Name = $_.Name
+        Account = $_.StartName
+        Path = $_.PathName
+    }
+}
+
+Then:
+icacls "C:\path\to\service.exe"
+icacls "C:\path\to\service\directory"
+
+Finding: standard user can modify configuration or replace/write a binary used by a SYSTEM service.
+Evidence: whoami, sc qc, sc sdshow, and icacls.
+2. Outbound C2-style communication
+The ATSB Critical finding involved an unrestricted PowerShell/code-execution chain followed by an outbound callback.     ATSB SOE Penetration Test Repor…
+We do not need a reverse shell to test this. Use a controlled benign endpoint.
+Check DNS and TCP:
+Resolve-DnsName example.com
+
+Test-NetConnection example.com -Port 443
+Test-NetConnection example.com -Port 80
+
+If you have an Ionize-controlled HTTPS endpoint, even better:
+Invoke-WebRequest "https://YOUR-CONTROLLED-ENDPOINT/" -UseBasicParsing
+
+Also:
+curl.exe -I https://YOUR-CONTROLLED-ENDPOINT/
+
+If you control a non-standard listener:
+Test-NetConnection YOUR-HOST -Port 8443
+Test-NetConnection YOUR-HOST -Port 4443
+
+Interesting: unrestricted arbitrary outbound connectivity from user processes, particularly uncommon ports.
+Not automatically a finding: normal web access to 443.
+Evidence: command + successful TCP connection / HTTP response.
+3. Permissive application control / LOLBins
+This is already one of our strongest parallels. ATSB specifically identified MSBuild, InstallUtil and MSHTA as application-control bypass opportunities.     ATSB SOE Penetration Test Repor…
+We already have MSBuild = successful supplied-code execution.
+Now enumerate relevant binaries:
+$bins = @(
+"C:\Windows\Microsoft.NET\Framework\v4.0.30319\MSBuild.exe",
+"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\MSBuild.exe",
+"C:\Windows\Microsoft.NET\Framework\v4.0.30319\InstallUtil.exe",
+"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\InstallUtil.exe",
+"C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe",
+"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe",
+"C:\Windows\System32\mshta.exe",
+"C:\Windows\SysWOW64\mshta.exe"
+)
+
+$bins | ForEach-Object {
+    [pscustomobject]@{
+        Path = $_
+        Exists = Test-Path $_
+    }
+}
+
+For each present binary, first simply test whether Airlock prevents it launching:
+"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\InstallUtil.exe" /?
+
+"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /?
+
+C:\Windows\System32\mshta.exe
+
+For MSBuild, retain the benign Console.WriteLine("Ionize test...") proof we already ran.
+Finding: a standard user can use an approved/trusted binary to execute otherwise prohibited user-supplied code.
+ATSB's recommendation was explicitly to restrict standard-user access to code-execution tools and unapproved executables/scripts/DLLs.     ATSB SOE Penetration Test Repor…
+4. PowerShell CLM / FullLanguage
+ATSB had CLM enabled but bypassable.     ATSB SOE Penetration Test Repor…
+For us:
+whoami
+$ExecutionContext.SessionState.LanguageMode
+
+We already got:
+FullLanguage
+
+Also:
+powershell.exe -NoProfile -Command '$ExecutionContext.SessionState.LanguageMode'
+
+and, if available:
+pwsh.exe -NoProfile -Command '$ExecutionContext.SessionState.LanguageMode'
+
+ASIC result: we don't need to demonstrate a CLM bypass because the standard user already starts in FullLanguage.
+Capture that as evidence.
+5. BGInfo code-execution exposure
+ATSB used BGInfo as another application-control bypass.     ATSB SOE Penetration Test Repor…
+Find it:
+Get-ChildItem C:\ -Filter "Bginfo*.exe" -Recurse -ErrorAction SilentlyContinue |
+Select-Object FullName
+
+Also:
+where.exe /r C:\ Bginfo.exe
+where.exe /r C:\ Bginfo64.exe
+
+And look at common enterprise locations:
+Get-ChildItem "\\$env:USERDNSDOMAIN\NETLOGON" -ErrorAction SilentlyContinue
+
+If found:
+Get-AuthenticodeSignature "C:\path\Bginfo64.exe" |
+Format-List Status,SignerCertificate,Path
+
+Then test whether the standard user can launch it:
+"C:\path\Bginfo64.exe"
+
+At this stage I would not try to reproduce the old VBS payload** unless we need proof after confirming BGInfo is permitted**.
+Finding candidate: trusted BGInfo binary available to ordinary users and permitted through application control.
+6. Web infiltration/exfiltration
+ATSB could upload and download content through GitHub and Teams.     ATSB SOE Penetration Test Repor…
+Create a harmless marker:
+"Ionize SOE test - 12 Oct 2026" |
+Set-Content "$env:USERPROFILE\Desktop\Ionize-Web-Test.txt"
+
+Then test:
+GitHub
+OneDrive personal
+Google Drive
+Dropbox
+Teams web
+webmail attachment
+file.io-type services if permitted by ROE
+
+For downloads, use something harmless such as a plain text file.
+Finding: unrestricted upload/download through services that the SOE security design intends to restrict.
+Take screenshots showing the upload/download actually completing.
+7. DNS exfiltration capability
+ATSB demonstrated arbitrary external DNS resolution.     ATSB SOE Penetration Test Repor…
+Basic check:
+Resolve-DnsName example.com
+Resolve-DnsName www.google.com
+
+Then use an Ionize-controlled DNS domain if you have one:
+Resolve-DnsName "ionize-test-20261012.YOURDOMAIN"
+
+or:
+nslookup ionize-test-20261012.YOURDOMAIN
+
+Check the authoritative DNS logs on your controlled side.
+This proves arbitrary user-controlled labels can leave via DNS without transferring sensitive information.
+Finding: depends heavily on expected DNS architecture. External recursive resolution alone isn't necessarily a vulnerability.
+8. PowerShell Execution Policy
+ATSB found users could change their own execution policy.     ATSB SOE Penetration Test Repor…
+First:
+Get-ExecutionPolicy -List
+
+Then test CurrentUser modification:
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+
+Run:
+Get-ExecutionPolicy -List
+
+Then restore the original value.
+If the original CurrentUser state was Undefined:
+Set-ExecutionPolicy -Scope CurrentUser Undefined
+
+Also test Process scope:
+Set-ExecutionPolicy -Scope Process Bypass
+Get-ExecutionPolicy -List
+
+Process scope disappearing when PowerShell closes is expected.
+Important: Execution Policy is not itself a strong security boundary, so we'd assess this in combination with application control rather than automatically report it as Medium.
+9. USB infiltration/exfiltration
+ATSB could read and write an unapproved USB device.     ATSB SOE Penetration Test Repor…
+Insert an ordinary USB.
+Check detection:
+Get-Disk
+Get-Volume
+
+Then:
+Get-PnpDevice -PresentOnly |
+Where-Object {$_.Class -match 'DiskDrive|USB'} |
+Format-Table Class,FriendlyName,Status
+
+Test copying only benign data both directions:
+"Ionize USB Test" |
+Set-Content "$env:USERPROFILE\Desktop\Ionize-USB-Test.txt"
+
+Then:
+Copy-Item "$env:USERPROFILE\Desktop\Ionize-USB-Test.txt" E:\
+Copy-Item E:\Ionize-USB-Test.txt "$env:TEMP\Ionize-USB-Test-Copy.txt"
+
+Substitute the actual drive letter.
+Finding: unmanaged USB storage is fully usable contrary to the SOE's intended removable-media policy.
+10. UEFI / BIOS security
+ATSB users could change boot order and disable Secure Boot without authentication.     ATSB SOE Penetration Test Repor…
+Before reboot:
+Confirm-SecureBootUEFI
+
+And:
+Get-Tpm
+
+Also:
+manage-bde -status
+
+Then reboot into UEFI/BIOS.
+Check whether you can:
+enter UEFI without a password
+change boot order
+enable USB/external boot
+disable Secure Boot
+set/change firmware password
+change TPM/security settings
+
+You do not need to save destructive changes.
+Take photos/screenshots of any configuration page showing it is editable without authentication.
+This is potentially the same finding as ATSB if confirmed.
+11. MFA / Windows sign-in controls
+Check:
+whoami /user
+
+Then:
+Get-ComputerInfo |
+Select-Object WindowsProductName,WindowsVersion,WindowsBuildLabEx
+
+For the actual test, lock the device:
+rundll32.exe user32.dll,LockWorkStation
+
+Record what authentication methods are available:
+password
+PIN
+Windows Hello face/fingerprint
+security key
+smart card
+other provider
+
+Also inspect:
+dsregcmd /status
+
+Look particularly at:
+AzureAdJoined
+DomainJoined
+NgcSet
+WorkplaceJoined
+
+Be careful calling a Windows Hello PIN "single factor" — Hello for Business has a different trust model from an ordinary password.
+12. SCCM / ConfigMgr NAA exposure
+ATSB recovered cached SCCM Network Access Account secrets.     ATSB SOE Penetration Test Repor…
+First determine whether ConfigMgr exists:
+Get-Service CcmExec -ErrorAction SilentlyContinue
+
+Test-Path "C:\Windows\CCM"
+Test-Path "C:\Windows\CCMSetup"
+
+Get-CimInstance -Namespace root\ccm -ClassName SMS_Client -ErrorAction SilentlyContinue
+
+Check relevant files/directories that are readable:
+Get-ChildItem C:\Windows\CCM -ErrorAction SilentlyContinue |
+Select-Object Name,FullName
+
+And installed product:
+Get-CimInstance Win32_Product -ErrorAction SilentlyContinue |
+Where-Object {$_.Name -match 'Configuration Manager|SCCM'}
+
+I would stop at identifying whether NAA/policy credential material is exposed to the standard user. We do not need to decrypt real account credentials unless the ROE explicitly calls for that.
+Finding: sensitive SCCM credential material readable by a standard user.
+13. Credential Guard
+ATSB found Credential Guard not configured.     ATSB SOE Penetration Test Repor…
+Run:
+Get-CimInstance -ClassName Win32_DeviceGuard -Namespace root\Microsoft\Windows\DeviceGuard |
+Format-List *
+
+Key properties:
+SecurityServicesConfigured
+SecurityServicesRunning
+VirtualizationBasedSecurityStatus
+
+Also:
+msinfo32.exe
+
+Look for:
+Virtualization-based security
+Credential Guard
+
+And:
+Get-ComputerInfo |
+Select-Object DeviceGuard*
+
+Finding: Credential Guard expected by the hardening baseline but not configured/running.
+14. LSA Protection / RunAsPPL
+ATSB found LSA Protection disabled.     ATSB SOE Penetration Test Repor…
+Run:
+reg query "HKLM\SYSTEM\CurrentControlSet\Control\Lsa" /v RunAsPPL
+
+Also:
+reg query "HKLM\SYSTEM\CurrentControlSet\Control\Lsa" /v RunAsPPLBoot
+
+PowerShell:
+Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa" |
+Select-Object RunAsPPL,RunAsPPLBoot
+
+Typical interpretation:
+RunAsPPL 1 = enabled with UEFI variable
+RunAsPPL 2 = enabled without UEFI variable
+missing/0 = not configured
+
+Also check event logs if accessible:
+Get-WinEvent -FilterHashtable @{
+    LogName='System'
+    Id=12
+} -ErrorAction SilentlyContinue |
+Select-Object -First 10
+
+15. Driver co-installer policy
+ATSB reported Driver Co-Installer enabled.     ATSB SOE Penetration Test Repor…
+Check policy:
+reg query "HKLM\SOFTWARE\Policies\Microsoft\Windows\DeviceInstall\Settings"
+
+Particularly:
+reg query "HKLM\SOFTWARE\Policies\Microsoft\Windows\DeviceInstall\Settings" /v DisableCoInstallers
+
+PowerShell:
+Get-ItemProperty "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceInstall\Settings" -ErrorAction SilentlyContinue
+
+Expected hardened configuration:
+DisableCoInstallers = 1
+
+If absent/0, record it and compare against the client's target baseline before reporting.
+16. ASR rules
+We've already done this and appear to have a stronger gap than ATSB's audit-only configuration. ATSB had multiple rules configured in audit mode.     ATSB SOE Penetration Test Repor…
+Re-run cleanly:
+Get-MpPreference |
+Select-Object AttackSurfaceReductionRules_Ids,
+              AttackSurfaceReductionRules_Actions
+
+Better display:
+$p = Get-MpPreference
+
+for ($i=0; $i -lt $p.AttackSurfaceReductionRules_Ids.Count; $i++) {
+    [pscustomobject]@{
+        Rule   = $p.AttackSurfaceReductionRules_Ids[$i]
+        Action = $p.AttackSurfaceReductionRules_Actions[$i]
+    }
+}
+
+Typical values:
+0 = Disabled
+1 = Block
+2 = Audit
+6 = Warn
+
+Our previous output appeared empty.
+Take another clean screenshot.
+17. Browser advertising / browser hardening
+Open Edge:
+start msedge.exe
+
+Check policies:
+reg query "HKLM\SOFTWARE\Policies\Microsoft\Edge"
+reg query "HKCU\SOFTWARE\Policies\Microsoft\Edge"
+
+And:
+edge://policy
+edge://extensions
+
+Look at:
+extension enforcement
+SmartScreen
+download restrictions
+password manager
+developer tools
+JavaScript policies
+pop-up controls
+third-party extensions
+advertisement/content filtering
+
+For ad blocking, visit a benign ad-heavy test/news page and record whether third-party advertising is displayed.
+Don't report "no ad blocker" automatically unless it is actually required by ASIC's Essential Eight target/configuration baseline.
+18. Excel / Office security settings
+The ATSB report found users could change some Excel security settings.
+Check policies:
+reg query "HKCU\Software\Policies\Microsoft\Office" /s
+
+reg query "HKLM\Software\Policies\Microsoft\Office" /s
+
+Specifically search:
+reg query "HKCU\Software\Policies\Microsoft\Office" /s | findstr /i "VBA macro protectedview trusted"
+
+Then manually:
+Excel
+File
+Options
+Trust Center
+Trust Center Settings
+
+Inspect whether a standard user can alter:
+Macro Settings
+Protected View
+Trusted Locations
+Trusted Documents
+External Content
+ActiveX Settings
+
+Do not weaken them permanently. If editable, screenshot the controls and Cancel.
+Also perform a benign macro test if Office is installed and scope permits.
+19. PDF reader security settings
+Identify installed readers:
+Get-StartApps |
+Where-Object {$_.Name -match 'Adobe|Acrobat|PDF'}
+
+And:
+Get-ChildItem "C:\Program Files","C:\Program Files (x86)" -ErrorAction SilentlyContinue |
+Where-Object {$_.Name -match 'Adobe|Acrobat'}
+
+For Adobe, examine policy keys:
+reg query "HKLM\SOFTWARE\Policies\Adobe" /s
+reg query "HKCU\SOFTWARE\Policies\Adobe" /s
+
+Then open the reader's security/preferences UI and examine:
+Protected Mode
+Protected View
+JavaScript
+Enhanced Security
+trusted locations
+attachments
+external content
+
+Try toggling them but Cancel rather than save.
+If the standard user can weaken centrally expected controls, capture it.
+20. Microsoft Store / AppX restrictions
+Check policies:
+reg query "HKLM\SOFTWARE\Policies\Microsoft\WindowsStore"
+
+reg query "HKLM\SOFTWARE\Policies\Microsoft\Windows\Appx"
+
+PowerShell:
+Get-AppxPackage -Name Microsoft.WindowsStore |
+Select-Object Name,Version,PackageFullName,InstallLocation
+
+See whether Store launches:
+start ms-windows-store:
+
+Check whether user installation mechanisms are available:
+Get-Command Add-AppxPackage
+Get-Command Remove-AppxPackage
+
+We don't need to actually downgrade the Store initially.
+Test whether ordinary users can install a harmless approved .appx/.msix package if one is available in your test kit.
+Finding: unrestricted user-driven installation/downgrade of AppX packages where the SOE intends application installation to be administrator-only.
+I would run them in this order today
+To get the highest-value coverage quickest, I'd actually execute:
+1  Service permissions
+3  LOLBins/application control
+5  BGInfo
+8  PowerShell Execution Policy
+13 Credential Guard
+14 LSA Protection
+15 Driver co-installers
+16 ASR
+12 SCCM/NAA
+9  USB
+10 BIOS/UEFI
+6/7 Web + DNS
+11 Login authentication
+18 Office
+19 PDF
+20 Store
+17 Browser
+2  Controlled outbound connectivity
