@@ -22,3 +22,12 @@ $argsList[1] = [string[]]@($pathvar)
 $tmp = $SerializeInputToWrapper.Invoke($null, $argsList)
 
 Move-Item $tmp $output -Force
+
+
+Write-Host "Testing Microsoft.Workflow.Compiler.exe"
+
+& $workflowexe ".\run.xml" ".\results.xml"
+
+Write-Host "Exit code: $LASTEXITCODE"
+
+Test-Path .\results.xml
