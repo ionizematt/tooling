@@ -1,0 +1,165 @@
+# ============================================================
+# IONIZE - WORKFLOW COMPILER APPLICATION CONTROL TEST
+# ============================================================
+
+& {
+
+    $ErrorActionPreference = "Stop"
+
+    try {
+
+        $framework = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319"
+        $exe = Join-Path $framework "Microsoft.Workflow.Compiler.exe"
+
+        $dir = Join-Path $env:USERPROFILE "Ionize-Workflow-Test"
+
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+
+        $source  = Join-Path $dir "test.txt"
+        $xml     = Join-Path $dir "run.xml"
+        $results = Join-Path $dir "results.xml"
+        $proof   = Join-Path $dir "workflow-proof.txt"
+
+        if (-not (Test-Path $exe)) {
+            throw "Workflow Compiler executable not found."
+        }
+
+        # Remove any previous proof to prevent false positives
+
+        Remove-Item $proof -Force -ErrorAction SilentlyContinue
+
+
+        # ----------------------------------------------------
+        # Create benign C# test
+        # ----------------------------------------------------
+
+@'
+using System;
+using System.IO;
+using System.Workflow.ComponentModel;
+
+public class Run : Activity
+{
+    public Run()
+    {
+        string message =
+            "Ionize SOE test - " +
+            DateTime.Now.ToString("dd MMM yyyy HH:mm:ss") +
+            " - Workflow Compiler";
+
+        Console.WriteLine(message);
+
+        string directory = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            "Ionize-Workflow-Test"
+        );
+
+        File.WriteAllText(
+            Path.Combine(directory, "workflow-proof.txt"),
+            message
+        );
+    }
+}
+'@ | Set-Content -Path $source -Encoding ASCII
+
+
+        # ----------------------------------------------------
+        # Load compiler assemblies
+        # ----------------------------------------------------
+
+        Add-Type -Path (
+            Join-Path $framework "System.Workflow.ComponentModel.dll"
+        )
+
+        $assembly = [Reflection.Assembly]::LoadFrom($exe)
+
+        $wrapper = $assembly.GetType(
+            "Microsoft.Workflow.Compiler.CompilerWrapper",
+            $true
+        )
+
+        $method = $wrapper.GetMethod(
+            "SerializeInputToWrapper",
+            [Reflection.BindingFlags]"NonPublic,Static"
+        )
+
+        if (-not $method) {
+            throw "Serialization method not found."
+        }
+
+
+        # ----------------------------------------------------
+        # Create compiler parameters
+        # ----------------------------------------------------
+
+        $parameters = [System.Workflow.ComponentModel.Compiler.WorkflowCompilerParameters]::new()
+
+        $parameters.GenerateInMemory = $true
+
+        # Explicitly pass underlying .NET objects
+
+        $invokeArgs = [object[]]::new(2)
+
+        $invokeArgs[0] = $parameters.PSObject.BaseObject
+        $invokeArgs[1] = [string[]]@($source)
+
+
+        # ----------------------------------------------------
+        # Generate compiler XML
+        # ----------------------------------------------------
+
+        $tmp = $method.Invoke($null, $invokeArgs)
+
+        if (-not $tmp -or -not (Test-Path -LiteralPath $tmp)) {
+            throw "Compiler XML generation failed."
+        }
+
+        Move-Item -LiteralPath $tmp -Destination $xml -Force
+
+        Write-Host "`n[PASS] Compiler XML created" -ForegroundColor Green
+        Write-Host "XML: $xml"
+
+
+        # ----------------------------------------------------
+        # Execute Workflow Compiler
+        # ----------------------------------------------------
+
+        Write-Host "`n========== IONIZE SOE TEST ==========" -ForegroundColor Cyan
+        Write-Host "Test: Workflow Compiler C# Execution"
+        Write-Host "Date: $(Get-Date)"
+        Write-Host "User: $(whoami)"
+        Write-Host "Binary: $exe"
+        Write-Host "Input: $xml"
+        Write-Host "====================================="
+
+        & $exe $xml $results
+
+        Write-Host "`nExit Code: $LASTEXITCODE"
+
+
+        # ----------------------------------------------------
+        # Verify execution
+        # ----------------------------------------------------
+
+        if (Test-Path $proof) {
+
+            Write-Host "`n[CONFIRMED] C# code executed" -ForegroundColor Green
+
+            Get-Content $proof
+
+        }
+        else {
+
+            Write-Host "`n[NOT CONFIRMED] Execution proof not found" -ForegroundColor Yellow
+
+            Write-Host "Review compiler output and application-control notifications."
+        }
+
+    }
+    catch {
+
+        Write-Host "`n[TEST ERROR] $($_.Exception.Message)" -ForegroundColor Red
+
+    }
+
+}
