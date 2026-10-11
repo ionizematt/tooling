@@ -1,82 +1,53 @@
-# ============================================================
-# Ionize - Microsoft.Workflow.Compiler.exe Test
-# 9 October 2026
-# ============================================================
-
-# Identify the Windows Workflow Compiler
-$framework = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319"
-$workflowexe = Join-Path $framework "Microsoft.Workflow.Compiler.exe"
-
-# Use a writable directory in the current user's profile
-$testDir = Join-Path $env:USERPROFILE "Ionize-Workflow-Test"
-
-New-Item -ItemType Directory -Path $testDir -Force | Out-Null
-
-# Define test file paths
-$source = Join-Path $testDir "test.txt"
-$output = Join-Path $testDir "run.xml"
-$results = Join-Path $testDir "results.xml"
-
-# Confirm the compiler exists
-if (-not (Test-Path $workflowexe)) {
-    throw "Microsoft.Workflow.Compiler.exe was not found: $workflowexe"
-}
-
-# ------------------------------------------------------------
-# Create benign C# test code
-# ------------------------------------------------------------
+1. Create the benign C# file
+cd $env:USERPROFILE
 
 @'
 using System;
-using System.Workflow.Activities;
+using System.Workflow.ComponentModel;
 
-public class IonizeTest : SequentialWorkflowActivity
+public class Run : Activity
 {
-    public IonizeTest()
+    public Run()
     {
-        Console.WriteLine("Ionize test - 9 Oct 2026");
+        Console.WriteLine("Ionize test - 12 Oct 2026 - Workflow Compiler");
     }
 }
-'@ | Set-Content -Path $source -Encoding ASCII
+'@ | Set-Content test.txt
 
-# ------------------------------------------------------------
-# Create serialized compiler input
-# ------------------------------------------------------------
+2. Generate run.xml
+$workflowexe = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\Microsoft.Workflow.Compiler.exe"
 
-$workflowasm = [Reflection.Assembly]::LoadFrom($workflowexe)
+[Reflection.Assembly]::LoadFrom($workflowexe) | Out-Null
 
-$SerializeInputToWrapper = $workflowasm.GetType(
-    'Microsoft.Workflow.Compiler.CompilerWrapper'
-).GetMethod(
-    'SerializeInputToWrapper',
-    [Reflection.BindingFlags] 'NonPublic, Static'
+$method = [Microsoft.Workflow.Compiler.CompilerWrapper].GetMethod(
+    "SerializeInputToWrapper",
+    [Reflection.BindingFlags]"NonPublic,Static"
 )
 
-Add-Type -Path (Join-Path $framework "System.Workflow.ComponentModel.dll")
+Add-Type -Path "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\System.Workflow.ComponentModel.dll"
 
-$compilerparam = New-Object Workflow.ComponentModel.Compiler.WorkflowCompilerParameters
+$p = New-Object System.Workflow.ComponentModel.Compiler.WorkflowCompilerParameters
+$p.GenerateInMemory = $true
 
-$compilerparam.GenerateInMemory = $true
+$args2 = New-Object 'object[]' 2
+$args2[0] = $p.PSObject.BaseObject
+$args2[1] = [string[]]@("$PWD\test.txt")
 
-# Prepare reflection arguments
-$argsList = New-Object 'object[]' 2
-$argsList[0] = $compilerparam
-$argsList[1] = [string[]]@($source)
+$tmp = $method.Invoke($null,$args2)
 
-# Generate the XML
-$tmp = $SerializeInputToWrapper.Invoke($null, $argsList)
+Move-Item $tmp ".\run.xml" -Force
 
-Move-Item -Path $tmp -Destination $output -Force
+Quickly confirm:
+Test-Path .\run.xml
 
-# ------------------------------------------------------------
-# Execute Workflow Compiler
-# ------------------------------------------------------------
+You want:
+True
 
+3. Run the actual test
+Then just:
 whoami
+Write-Host "Testing Microsoft.Workflow.Compiler.exe"
 
-Write-Host "Executing: $workflowexe"
-Write-Host "Input: $output"
-
-& $workflowexe $output $results
+& $workflowexe ".\run.xml" ".\results.xml"
 
 Write-Host "Exit code: $LASTEXITCODE"
