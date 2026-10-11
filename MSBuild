@@ -1,0 +1,41 @@
+# ============================================================
+# IONIZE - MSBUILD APPLICATION CONTROL TEST
+# ============================================================
+
+Set-Location $env:USERPROFILE
+
+Write-Host "`n========== IONIZE SOE TEST ==========" -ForegroundColor Cyan
+Write-Host "Test: MSBuild Inline C# Execution"
+Write-Host "Date: $(Get-Date)"
+Write-Host "User: $(whoami)"
+Write-Host "====================================="
+
+
+# MSBuild x86
+
+Write-Host "`n[TEST 1] MSBuild x86" -ForegroundColor Yellow
+
+$x86 = "C:\Windows\Microsoft.NET\Framework\v4.0.30319\MSBuild.exe"
+$p86 = ".\Ionize-MSBuild-x86.csproj"
+
+Write-Host "Binary: $x86"
+Write-Host "Project: $p86"
+
+& $x86 $p86 /t:IonizeTest /nologo /verbosity:minimal
+
+Write-Host "Exit Code: $LASTEXITCODE"
+
+
+# MSBuild x64
+
+Write-Host "`n[TEST 2] MSBuild x64" -ForegroundColor Yellow
+
+$x64 = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\MSBuild.exe"
+$p64 = ".\Ionize-MSBuild-x64.csproj"
+
+Write-Host "Binary: $x64"
+Write-Host "Project: $p64"
+
+& $x64 $p64 /t:IonizeTest /nologo /verbosity:minimal
+
+Write-Host "Exit Code: $LASTEXITCODE"
