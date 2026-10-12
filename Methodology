@@ -483,3 +483,6 @@ To get the highest-value coverage quickest, I'd actually execute:
 20 Store
 17 Browser
 2  Controlled outbound connectivity
+
+
+reg query "HKLM\SOFTWARE\Policies\Microsoft\Windows\DeviceInstall" /s | findstr /i "CoInstaller DisableCoInstallers"
