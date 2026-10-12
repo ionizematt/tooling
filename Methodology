@@ -498,3 +498,75 @@ Computer Configuration
         Device Installation Restrictions
 
 reg query "HKLM\SOFTWARE\Policies\Microsoft\Windows\DeviceInstall" /s
+
+
+1. PowerShell 2.0
+Best check:
+Get-WindowsOptionalFeature -Online -FeatureName MicrosoftWindowsPowerShellV2Root,MicrosoftWindowsPowerShellV2
+
+If that syntax errors, run them separately:
+Get-WindowsOptionalFeature -Online -FeatureName MicrosoftWindowsPowerShellV2Root
+Get-WindowsOptionalFeature -Online -FeatureName MicrosoftWindowsPowerShellV2
+
+Interpretation:
+State : Disabled
+
+or:
+State : DisabledWithPayloadRemoved
+
+= PASS
+If you get:
+State : Enabled
+
+= finding candidate
+Also try the practical check:
+powershell.exe -Version 2 -NoProfile -Command '$PSVersionTable.PSVersion'
+
+Good result would be an error saying PowerShell 2.0 isn’t installed or available.
+2. Internet Explorer 11 feature state
+On Windows 11, IE11 should generally not be available as an enabled Windows feature.
+Run:
+Get-WindowsOptionalFeature -Online |
+Where-Object {$_.FeatureName -match 'Internet-Explorer|InternetExplorer'} |
+Select-Object FeatureName,State
+
+Also:
+dism /online /Get-Features /Format:Table | findstr /i "Internet Explorer"
+
+If nothing is returned, that is generally a good sign on Windows 11.
+You can also check whether the old executable is present:
+Test-Path "C:\Program Files\Internet Explorer\iexplore.exe"
+Test-Path "C:\Program Files (x86)\Internet Explorer\iexplore.exe"
+
+Presence alone does not mean IE11 is usable, because compatibility components may remain.
+A stronger practical test:
+start iexplore.exe
+
+If it redirects to Edge or fails to launch as IE, I’d treat IE11 as effectively disabled.
+3. .NET Framework 3.5 feature state
+Run:
+Get-WindowsOptionalFeature -Online -FeatureName NetFx3
+
+Interpretation:
+State : Disabled
+
+or:
+DisabledWithPayloadRemoved
+
+= PASS
+State : Enabled
+
+= finding candidate / legacy feature enabled
+You can also confirm with DISM:
+dism /online /Get-FeatureInfo /FeatureName:NetFx3
+
+And if you want a single combined command for all three:
+Get-WindowsOptionalFeature -Online |
+Where-Object {
+    $_.FeatureName -match 'PowerShellV2|NetFx3|Internet'
+} |
+Select-Object FeatureName,State
+
+One caveat: Get-WindowsOptionalFeature -Online may require elevation on some builds. If you get an access-denied/admin error, that’s not a failed control — just use the practical checks plus DISM where readable.
+
+
