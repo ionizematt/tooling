@@ -486,3 +486,15 @@ To get the highest-value coverage quickest, I'd actually execute:
 
 
 reg query "HKLM\SOFTWARE\Policies\Microsoft\Windows\DeviceInstall" /s | findstr /i "CoInstaller DisableCoInstallers"
+
+reg query "HKLM\SOFTWARE\Policies\Microsoft\Windows\DeviceInstall\Restrictions" /s
+
+gpresult /h "%USERPROFILE%\Desktop\gpresult-device.html"
+
+Computer Configuration
+  Administrative Templates
+    System
+      Device Installation
+        Device Installation Restrictions
+
+reg query "HKLM\SOFTWARE\Policies\Microsoft\Windows\DeviceInstall" /s
