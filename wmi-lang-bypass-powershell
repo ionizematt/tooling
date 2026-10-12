@@ -1,0 +1,10 @@
+whoami
+
+$result = Invoke-CimMethod `
+  -ClassName Win32_Process `
+  -MethodName Create `
+  -Arguments @{CommandLine='cmd.exe /c echo Ionize-WMI-Test > "%TEMP%\Ionize-WMI-Test.txt"'}
+
+$result
+
+Get-Content "$env:TEMP\Ionize-WMI-Test.txt"
