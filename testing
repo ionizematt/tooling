@@ -191,3 +191,5 @@ Test 2
     /verbosity:minimal
 
 
+Two High-risk PowerShell issues have been identified during testing that I wanted to flag early. The first relates to the PowerShell execution policy. The SOE is configured with RemoteSigned at the LocalMachine scope; however, a standard user can override this by setting the higher-precedence CurrentUser scope to Bypass, changing the effective execution policy without administrative privileges. While execution policy is not intended to be a security boundary, this demonstrates that the configured restriction is not being centrally enforced.
+The second issue is that standard users can access PowerShell in Full Language Mode, with no Constrained Language Mode restrictions observed. This provides access to full PowerShell functionality, including .NET classes, COM objects and advanced scripting capabilities. The impact of both findings is increased by the separate MSBuild application-control bypass already identified, as together they provide multiple trusted mechanisms for a standard user to execute supplied code.
