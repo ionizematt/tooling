@@ -384,3 +384,51 @@ The final evidence sequence should demonstrate:
 5. Successful code execution through MSBuild.
 6. Direct unapproved executable/script execution blocked by Airlock.
 Current Status: CONFIRMED HIGH.
+
+Yep — the screenshots show two useful things already:
+- InstallUtil.exe is present and runs for the standard user.
+- csc.exe is present and runs for the standard user.
+- Your CSC compile test failed only because the command used CMD syntax inside PowerShell. In PowerShell you need the call operator &, and %TEMP% should be Env: Temp.
+Run this exact flow:
+$src = "$env:TEMP\Ionize-CSC-Test.cs"
+$out = "$env:TEMP\Ionize-CSC-Test.exe"
+
+@'
+using System;
+
+class IonizeTest
+{
+    static void Main()
+    {
+        Console.WriteLine("Ionize CSC application control test");
+        Console.WriteLine("User: " + Environment.UserName);
+        Console.WriteLine("Machine: " + Environment.MachineName);
+    }
+}
+'@ | Set-Content $src -Encoding ASCII
+
+Confirm the source:
+Get-Content $src
+
+Compile it:
+& "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe" `
+    /out:$out `
+    $src
+
+"CSC exit code: $LASTEXITCODE"
+
+Then confirm whether the EXE was created:
+Get-Item $out
+
+Then try to execute it:
+& $out
+
+What the outcomes mean:
+- CSC compiles successfully, but Airlock blocks Ionize-CSC-Test.exe → good control outcome. CSC is usable, but it does not give you an application-control bypass on its own.
+- CSC itself is blocked → PASS.
+- CSC compiles and the resulting EXE executes → significant application-control finding.
+- Compilation fails with a compiler error → troubleshoot the source/compiler; not an Airlock result.
+I’d expect, based on your earlier EXE testing, that CSC will probably compile it successfully and Airlock will then block the generated EXE. That would be worth recording as:
+csc.exe was accessible to the standard user and permitted compilation of user-controlled C#; however, the resulting executable was prevented from running by Airlock. No application-control bypass was demonstrated via CSC.
+
+For InstallUtil, what you’ve shown so far is only that the binary is available. That is not yet a finding. We’d need a benign user-controlled assembly to determine whether it can actually be used as an indirect execution mechanism.
