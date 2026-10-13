@@ -1,0 +1,386 @@
+# ASIC Windows 11 SOE – Remaining Testing
+
+## 1. Final Service Permission / Privilege Escalation Review
+
+**Objective:** Confirm that a standard user cannot modify the configuration or executable content of a privileged Windows service.
+
+### Enumerate Services
+
+```powershell
+whoami
+
+Get-CimInstance Win32_Service |
+Select-Object Name,StartName,State,PathName |
+Sort-Object Name
+
+Prioritise services running as:
+- LocalSystem
+- LocalService
+- NetworkService
+Review Interesting Services
+sc.exe qc <SERVICE_NAME>
+sc.exe sdshow <SERVICE_NAME>
+
+Check whether the service configuration grants excessive rights to:
+- Users
+- Authenticated Users
+- Everyone
+- Current standard user
+Particularly look for the ability to:
+- Change service configuration
+- Start or stop the service
+- Modify service permissions
+- Replace or modify the service binary
+Check Service Binary and Directory ACLs
+icacls "C:\Path\To\Service.exe"
+icacls "C:\Path\To\Service\Directory"
+
+PASS: No standard-user write/change permissions over privileged services or their binaries.
+FINDING: Standard user can modify a service running as SYSTEM or another privileged account.
+Evidence to Capture:
+- whoami
+- sc qc
+- sc sdshow
+- icacls
+2. InstallUtil Application Control Test
+Objective: Determine whether the Microsoft-signed InstallUtil utility is available to a standard user and permitted by Airlock.
+Locate InstallUtil
+where.exe /r C:\Windows InstallUtil.exe
+
+Common locations:
+C:\Windows\Microsoft.NET\Framework\v4.0.30319\InstallUtil.exe
+C:\Windows\Microsoft.NET\Framework64\v4.0.30319\InstallUtil.exe
+
+Confirm Availability and Signature
+$paths = @(
+"C:\Windows\Microsoft.NET\Framework\v4.0.30319\InstallUtil.exe",
+"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\InstallUtil.exe"
+)
+
+$paths | ForEach-Object {
+    if (Test-Path $_) {
+        Get-AuthenticodeSignature $_ |
+        Select-Object Status,@{N='Signer';E={$_.SignerCertificate.Subject}},Path
+    }
+}
+
+Basic Execution Check
+"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\InstallUtil.exe" /?
+
+PASS: Airlock prevents use, or the utility is not present.
+INVESTIGATE: Utility executes for standard users.
+If available, perform only a benign Ionize marker test to determine whether user-controlled code can execute through InstallUtil.
+3. CSC Compiler Application Control Test
+Objective: Determine whether a standard user can compile user-controlled C# using the Microsoft C# compiler.
+Locate CSC
+where.exe /r C:\Windows csc.exe
+
+Common locations:
+C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe
+C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe
+
+Basic Availability Test
+"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /?
+
+Benign Compilation Test
+@'
+using System;
+
+class IonizeTest
+{
+    static void Main()
+    {
+        Console.WriteLine("Ionize CSC application control test");
+    }
+}
+'@ | Set-Content "$env:TEMP\Ionize-CSC-Test.cs"
+
+Compile:
+"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /out:"%TEMP%\Ionize-CSC-Test.exe" "%TEMP%\Ionize-CSC-Test.cs"
+
+Then test execution:
+"%TEMP%\Ionize-CSC-Test.exe"
+
+PASS: Compilation or subsequent execution is blocked.
+FINDING CANDIDATE: CSC provides an additional application-control execution path.
+4. Microsoft.Workflow.Compiler.exe Final Validation
+Objective: Resolve the previously inconclusive Workflow Compiler result.
+Locate Binary
+$paths = @(
+"$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\Microsoft.Workflow.Compiler.exe",
+"$env:WINDIR\Microsoft.NET\Framework\v4.0.30319\Microsoft.Workflow.Compiler.exe"
+)
+
+$paths | Where-Object { Test-Path $_ }
+
+If present, repeat the existing benign Ionize test.
+Required outcome for a confirmed bypass:
+User-controlled C# executes and displays an Ionize test marker.
+
+PASS: Airlock blocks execution.
+INCONCLUSIVE: Compiler runs but supplied code does not execute.
+FINDING: User-controlled code successfully executes through the trusted compiler.
+5. Valid MSI Application Control Test
+Objective: Resolve the previous invalid MSI result.
+Use a known-good, benign MSI package.
+msiexec.exe /i "C:\Path\Known-Good-Test.msi"
+
+Do not use the previous package if Windows reports that the installer itself is invalid.
+PASS: Airlock/application control explicitly prevents installation or execution.
+FINDING CANDIDATE: Standard user can execute/install an unapproved valid MSI.
+INCONCLUSIVE: MSI itself is malformed or incompatible.
+6. MST Application Control Test
+Objective: Determine whether MSI transforms are appropriately controlled.
+Requires:
+- A valid MSI
+- A valid matching MST
+msiexec.exe /i "Test.msi" TRANSFORMS="Test.mst"
+
+PASS: Unapproved transformed installation is blocked.
+INCONCLUSIVE: MSI/MST pair is invalid.
+7. DLL Application Control Coverage
+Objective: Confirm unapproved DLL execution is prevented.
+Use a benign Ionize DLL test artefact containing only a harmless marker.
+Example invocation where the DLL exposes an appropriate test entry point:
+rundll32.exe ".\Ionize-Test.dll",Test
+
+PASS: Airlock explicitly blocks the DLL.
+FINDING CANDIDATE: User-supplied DLL code executes through an allowed host process.
+8. OCX Application Control Coverage
+Objective: Confirm unapproved ActiveX/OCX components cannot execute or register.
+Using a benign test artefact:
+regsvr32.exe ".\Ionize-Test.ocx"
+
+PASS: Airlock or Windows policy prevents use.
+FINDING CANDIDATE: Unapproved OCX code executes/registers from the standard-user context.
+9. CPL Application Control Coverage
+Objective: Confirm unapproved Control Panel extensions cannot execute.
+Using a benign test CPL:
+control.exe ".\Ionize-Test.cpl"
+
+PASS: Airlock prevents execution.
+FINDING CANDIDATE: User-controlled CPL code executes through control.exe.
+10. MSP Application Control Coverage
+Objective: Confirm Windows Installer patch files are appropriately controlled.
+This requires a valid benign MSP applicable to a known test MSI/product.
+Do not draw a conclusion from an invalid or non-applicable MSP.
+PASS: Application control prevents unauthorised patch processing.
+INCONCLUSIVE: Patch does not apply to the installed product.
+Firmware and Device Hardening
+11. BIOS / UEFI Security
+Objective: Determine whether a user with physical access can alter firmware-level security settings.
+Pre-Reboot Checks
+Confirm-SecureBootUEFI
+Get-Tpm
+
+manage-bde -status
+
+Reboot into UEFI / BIOS
+Check whether authentication is required before changing:
+- Boot order
+- USB/external boot
+- Secure Boot
+- TPM/security settings
+- Firmware password settings
+Do not save disruptive configuration changes unless required.
+PASS: Firmware settings require appropriate authentication.
+FINDING: Standard user/physical attacker can modify security-sensitive firmware configuration without authentication.
+Evidence to Capture:
+- Photos/screenshots of editable UEFI configuration
+- Secure Boot state
+- Boot order controls
+- Firmware password state
+Legacy Windows Features
+12. PowerShell 2.0
+Feature State
+Get-WindowsOptionalFeature -Online -FeatureName MicrosoftWindowsPowerShellV2Root
+Get-WindowsOptionalFeature -Online -FeatureName MicrosoftWindowsPowerShellV2
+
+Practical Test
+powershell.exe -Version 2 -NoProfile -Command '$PSVersionTable.PSVersion'
+
+PASS:
+Disabled
+DisabledWithPayloadRemoved
+
+or PowerShell reports that version 2 is unavailable.
+FINDING CANDIDATE:
+Enabled
+
+and PowerShell v2 can actually start.
+13. Internet Explorer 11
+Optional Feature Check
+Get-WindowsOptionalFeature -Online |
+Where-Object {$_.FeatureName -match 'Internet-Explorer|InternetExplorer'} |
+Select-Object FeatureName,State
+
+Alternative:
+dism /online /Get-Features /Format:Table | findstr /i "Internet"
+
+Check Binaries
+Test-Path "C:\Program Files\Internet Explorer\iexplore.exe"
+Test-Path "C:\Program Files (x86)\Internet Explorer\iexplore.exe"
+
+Practical Test
+start iexplore.exe
+
+PASS: IE11 is unavailable, disabled, or redirects to Microsoft Edge.
+FINDING CANDIDATE: IE11 desktop browser remains usable.
+Note: Presence of IE compatibility files alone is not sufficient for a finding.
+14. .NET Framework 3.5
+Get-WindowsOptionalFeature -Online -FeatureName NetFx3
+
+Alternative:
+dism /online /Get-FeatureInfo /FeatureName:NetFx3
+
+PASS:
+Disabled
+DisabledWithPayloadRemoved
+
+FINDING CANDIDATE:
+Enabled
+
+Confirm whether ASIC has a legitimate dependency before reporting.
+Removable Media Hardening
+15. AutoRun / AutoPlay
+Objective: Confirm automatic execution from removable media is disabled.
+Machine Policy
+reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer" /v NoDriveTypeAutoRun
+reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer" /v NoAutorun
+
+User Policy
+reg query "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer" /v NoDriveTypeAutoRun
+reg query "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer" /v NoAutorun
+
+A value such as:
+NoDriveTypeAutoRun    REG_DWORD    0xff
+
+indicates AutoRun is disabled for all drive types.
+Because USB file ingress is already confirmed, this control is particularly relevant.
+PASS: Removable media does not automatically execute content.
+FINDING: AutoRun/AutoPlay permits automatic execution from removable media.
+Web Filtering
+16. Additional Web Content Filtering Validation
+Current Results
+Advertising content     ALLOWED
+revshells.com           ALLOWED
+exploit-db.com          BLOCKED
+
+The environment therefore has some filtering, but enforcement appears inconsistent.
+Optionally test a small number of additional clearly categorised security/offensive-tooling sites to determine whether this is:
+- One incorrect site categorisation; or
+- A broader high-risk/security-tooling filtering gap.
+Do not download payloads.
+Evidence to Capture:
+- Browser block page
+- Successfully loaded website
+- URL visible in screenshot
+Potential finding title:
+Incomplete Web Content Filtering
+
+MSBuild High Finding – Final Evidence Pack
+17. MSBuild Application Control Bypass Evidence
+Objective: Finalise clean evidence for the confirmed High-severity MSBuild application-control bypass.
+Establish Standard-User Context
+whoami
+
+Confirm MSBuild Presence
+$msbuild32 = "C:\Windows\Microsoft.NET\Framework\v4.0.30319\MSBuild.exe"
+$msbuild64 = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\MSBuild.exe"
+
+[pscustomobject]@{
+    MSBuild32 = Test-Path $msbuild32
+    MSBuild64 = Test-Path $msbuild64
+}
+
+Confirm Microsoft Signature
+Get-AuthenticodeSignature $msbuild32 |
+Select-Object Status,@{N='Signer';E={$_.SignerCertificate.Subject}},Path
+
+Get-AuthenticodeSignature $msbuild64 |
+Select-Object Status,@{N='Signer';E={$_.SignerCertificate.Subject}},Path
+
+Create Benign User-Controlled Project
+$project = "$env:TEMP\Ionize-MSBuild-Test.csproj"
+
+@'
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <UsingTask
+      TaskName="IonizeTask"
+      TaskFactory="CodeTaskFactory"
+      AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.v4.0.dll">
+
+    <Task>
+      <Code Type="Class" Language="cs">
+        <![CDATA[
+using System;
+using Microsoft.Build.Framework;
+using Microsoft.Build.Utilities;
+
+public class IonizeTask : Task
+{
+    public override bool Execute()
+    {
+        Console.WriteLine("Ionize MSBuild application control test");
+        Console.WriteLine("User: " + Environment.UserName);
+        Console.WriteLine("Machine: " + Environment.MachineName);
+        return true;
+    }
+}
+        ]]>
+      </Code>
+    </Task>
+
+  </UsingTask>
+
+  <Target Name="IonizeTest">
+    <IonizeTask />
+  </Target>
+
+</Project>
+'@ | Set-Content $project -Encoding ASCII
+
+Confirm File Location
+Get-Item $project |
+Select-Object FullName,Length,LastWriteTime
+
+Display Project Contents
+Get-Content $project
+
+Test 64-bit MSBuild
+whoami
+
+& $msbuild64 $project /t:IonizeTest /nologo /verbosity:minimal
+
+"Exit code: $LASTEXITCODE"
+
+Test 32-bit MSBuild
+whoami
+
+& $msbuild32 $project /t:IonizeTest /nologo /verbosity:minimal
+
+"Exit code: $LASTEXITCODE"
+
+Expected Vulnerable Result
+Ionize MSBuild application control test
+User: <standard user>
+Machine: <hostname>
+Exit code: 0
+
+Optional User-Writable Location Validation
+Copy-Item $project "$env:USERPROFILE\Downloads\Ionize-MSBuild-Test.csproj" -Force
+
+& $msbuild64 "$env:USERPROFILE\Downloads\Ionize-MSBuild-Test.csproj" `
+    /t:IonizeTest /nologo /verbosity:minimal
+
+Airlock Comparison Evidence
+Capture a separate screenshot showing Airlock explicitly blocking a conventional unapproved executable/script.
+The final evidence sequence should demonstrate:
+1. Standard user context.
+2. Microsoft-signed MSBuild binary.
+3. User-controlled project in %TEMP% or Downloads.
+4. User-controlled C# marker.
+5. Successful code execution through MSBuild.
+6. Direct unapproved executable/script execution blocked by Airlock.
+Current Status: CONFIRMED HIGH.
